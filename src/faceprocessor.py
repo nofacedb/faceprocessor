@@ -6,11 +6,11 @@ import argparse
 import asyncio
 from re import match
 
+from io import BytesIO
 import face_recognition
 import numpy as np
 from PIL import Image
 from aiohttp import web
-from io import BytesIO
 
 U_INT64_SIZE = np.dtype(np.uint64).itemsize
 FLOAT64_SIZE = np.dtype(np.float64).itemsize
@@ -26,16 +26,24 @@ def parse_args():
                                      formatter_class=argparse.RawDescriptionHelpFormatter,
                                      description=DESC_STR)
     parser.add_argument('-v', '--version', action='version', version='%(prog)s v0.1')
-    parser.add_argument('-s', '--socket', type=str, default='', help=r'IP:PORT or path to UNIX-Socket')
-    parser.add_argument('-i', '--input', type=str, default='', help=r'path to input image')
-    parser.add_argument('-g', '--gpu', action='store_true', help=r'use GPU')
+    parser.add_argument('-c', '--config', type=str, default='',
+                        help='path to yaml config file')
+    parser.add_argument('-s', '--socket', type=str, default='',
+                        help='IP:PORT or path to UNIX-Socket')
+    parser.add_argument('--reqmaxsize', type=int, default=1024**2,
+                        help='client request max size in bytes (default: %(default)s))')
+    parser.add_argument('-i', '--input', type=str, default='',
+                        help='path to input image')
+    parser.add_argument('-g', '--gpu', action='store_true',
+                        help='use GPU')
     parser.add_argument('-u', '--upsamples', type=int, default=1,
                         help='number of upsamples (bigger ->'
                              ' smaller faces could be found (default: %(default)s))')
     parser.add_argument('-j', '--jitters', type=int, default=1,
                         help='number of re-samples (bigger -> better quality '
                              'of features vectors, but slower (default: %(default)s))')
-    parser.add_argument('-o', '--output', type=str, default='', help=r'path to output image')
+    parser.add_argument('-o', '--output', type=str, default='',
+                        help='path to output image')
 
     args = parser.parse_args()
 
@@ -74,6 +82,7 @@ class AppCtx:
         self.lock = asyncio.Lock()
 
     async def handle(self, req: web.Request) -> web.Response:
+        """handle handles requests to process image"""
         img_buff = await req.read()
         img = Image.open(BytesIO(img_buff))
         img = np.array(img)
@@ -95,12 +104,12 @@ class AppCtx:
         return resp
 
 
-def server_face_recognition(args):
+def server_face_recognition(args) -> int:
+    """server_face_recognition starts asynchronous face recognition server"""
     conn_str = args.socket
     is_ip_port = match(r'(\d)+\.(\d)+\.(\d)+\.(\d)+:(\d)+', conn_str) is not None
-    loop = asyncio.get_event_loop()
     app_ctx = AppCtx(args.gpu, args.upsamples, args.jitters)
-    app = web.Application()
+    app = web.Application(client_max_size=args.reqmaxsize)
     app.add_routes([web.put('/', app_ctx.handle)])
     if is_ip_port:
         conn_data = conn_str.split(':')
@@ -110,6 +119,7 @@ def server_face_recognition(args):
     else:
         path = conn_str
         web.run_app(app, path=path)
+    return 0
 
 
 def main():
@@ -117,7 +127,7 @@ def main():
     args = parse_args()
     if args.socket == '':
         return file_face_recognition(args)
-    server_face_recognition(args)
+    return server_face_recognition(args)
 
 
 if __name__ == "__main__":
