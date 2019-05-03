@@ -4,13 +4,14 @@
 
 import argparse
 import asyncio
+from io import BytesIO
 from re import match
 
-from io import BytesIO
 import face_recognition
 import numpy as np
 from PIL import Image
 from aiohttp import web
+from base64 import b64decode
 
 U_INT64_SIZE = np.dtype(np.uint64).itemsize
 FLOAT64_SIZE = np.dtype(np.float64).itemsize
@@ -30,7 +31,7 @@ def parse_args():
                         help='path to yaml config file')
     parser.add_argument('-s', '--socket', type=str, default='',
                         help='IP:PORT or path to UNIX-Socket')
-    parser.add_argument('--reqmaxsize', type=int, default=1024**2,
+    parser.add_argument('--reqmaxsize', type=int, default=1024 ** 2,
                         help='client request max size in bytes (default: %(default)s))')
     parser.add_argument('-i', '--input', type=str, default='',
                         help='path to input image')
@@ -83,7 +84,9 @@ class AppCtx:
 
     async def handle(self, req: web.Request) -> web.Response:
         """handle handles requests to process image"""
-        img_buff = await req.read()
+        body = await req.json()
+        b64_img_buff = body.get('img_buff')
+        img_buff = b64decode(b64_img_buff)
         img = Image.open(BytesIO(img_buff))
         img = np.array(img)
         async with self.lock:
@@ -92,16 +95,10 @@ class AppCtx:
             else:
                 face_locations = face_recognition.face_locations(img, self.upsamples, 'hog')
             face_encodings = face_recognition.face_encodings(img, face_locations, self.jitters)
-
-        face_locations = [np.array(fl).astype(np.uint64) for fl in face_locations]
-        data_buff = BytesIO()
-        for i in range(len(face_locations)):
-            data_buff.write(face_locations[i].astype(np.uint64).tobytes())
-            data_buff.write(face_encodings[i].astype(np.float64).tobytes())
-        data_buff.seek(0)
-        resp = web.Response(body=data_buff.read())
-        data_buff.close()
-        return resp
+        resp = {
+            'faces': [{'box': face_locations[i], 'features': face_encodings[i].tolist()} for i in range(len(face_encodings))]
+        }
+        return web.json_response(resp)
 
 
 def server_face_recognition(args) -> int:
@@ -111,6 +108,7 @@ def server_face_recognition(args) -> int:
     app_ctx = AppCtx(args.gpu, args.upsamples, args.jitters)
     app = web.Application(client_max_size=args.reqmaxsize)
     app.add_routes([web.put('/', app_ctx.handle)])
+
     if is_ip_port:
         conn_data = conn_str.split(':')
         host = conn_data[0]
@@ -119,6 +117,7 @@ def server_face_recognition(args) -> int:
     else:
         path = conn_str
         web.run_app(app, path=path)
+
     return 0
 
 
