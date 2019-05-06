@@ -4,14 +4,15 @@
 
 import argparse
 import asyncio
+import json
+from base64 import b64decode
 from io import BytesIO
 from re import match
 
 import face_recognition
 import numpy as np
 from PIL import Image
-from aiohttp import web
-from base64 import b64decode
+from aiohttp import web, ClientSession
 
 U_INT64_SIZE = np.dtype(np.uint64).itemsize
 FLOAT64_SIZE = np.dtype(np.float64).itemsize
@@ -31,6 +32,8 @@ def parse_args():
                         help='path to yaml config file')
     parser.add_argument('-s', '--socket', type=str, default='',
                         help='IP:PORT or path to UNIX-Socket')
+    parser.add_argument('--immedresp', action='store_true',
+                        help='specifies, if server should return answer immediately')
     parser.add_argument('--reqmaxsize', type=int, default=1024 ** 2,
                         help='client request max size in bytes (default: %(default)s))')
     parser.add_argument('-i', '--input', type=str, default='',
@@ -76,17 +79,46 @@ def file_face_recognition(args):
 class AppCtx:
     """AppCtx class is used for scheduling face recognition tasks"""
 
-    def __init__(self, gpu: bool, upsamples: int, jitters: int):
+    def __init__(self, immed_resp: bool, gpu: bool, upsamples: int, jitters: int):
+        self.immed_resp = immed_resp
         self.gpu = gpu
         self.upsamples = upsamples
         self.jitters = jitters
         self.lock = asyncio.Lock()
+        self.tasks = []
 
     async def handle(self, req: web.Request) -> web.Response:
         """handle handles requests to process image"""
         body = await req.json()
+        headers = body.get('headers')
+        id = body.get('id')
         b64_img_buff = body.get('img_buff')
         img_buff = b64decode(b64_img_buff)
+
+        if self.immed_resp:
+            asyncio.ensure_future(self.create_response(headers, id, img_buff))
+            return web.json_response({'headers': {'src_addr': '', 'immed': True}})
+
+        faces = await self.process_img(img_buff)
+        resp = {
+            'headers': {'src_addr': '', 'immed': False},
+            'id': id,
+            'faces': faces
+        }
+        return web.json_response(resp)
+
+    async def create_response(self, headers, id, img_buff):
+        faces = await self.process_img(img_buff)
+        async with ClientSession(
+                json_serialize=json.dumps) as session:
+            await session.put('http://127.0.0.1:10000' + '/api/v1/put_features', json={
+                'headers': {'src_addr': '', 'immed': False},
+                'id': id,
+                'faces': faces
+            })
+        print('process request for id', id)
+
+    async def process_img(self, img_buff):
         img = Image.open(BytesIO(img_buff))
         img = np.array(img)
         async with self.lock:
@@ -95,17 +127,15 @@ class AppCtx:
             else:
                 face_locations = face_recognition.face_locations(img, self.upsamples, 'hog')
             face_encodings = face_recognition.face_encodings(img, face_locations, self.jitters)
-        resp = {
-            'faces': [{'box': face_locations[i], 'features': face_encodings[i].tolist()} for i in range(len(face_encodings))]
-        }
-        return web.json_response(resp)
+        return [{'box': face_locations[i], 'features': face_encodings[i].tolist()} for i in
+                range(len(face_encodings))]
 
 
 def server_face_recognition(args) -> int:
     """server_face_recognition starts asynchronous face recognition server"""
     conn_str = args.socket
     is_ip_port = match(r'(\d)+\.(\d)+\.(\d)+\.(\d)+:(\d)+', conn_str) is not None
-    app_ctx = AppCtx(args.gpu, args.upsamples, args.jitters)
+    app_ctx = AppCtx(args.immedresp, args.gpu, args.upsamples, args.jitters)
     app = web.Application(client_max_size=args.reqmaxsize)
     app.add_routes([web.put('/', app_ctx.handle)])
 
