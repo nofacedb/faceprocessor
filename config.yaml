@@ -1,7 +1,9 @@
 http_server:
+  # name is a name, which will be sent as server name to other microservices.
+  name: "0.0.0.0:10000"
   # server_addr is IP:PORT or path to UNIX socket
   # on which server will listen.
-  socket : "0.0.0.0:10000"
+  socket: "0.0.0.0:10000"
   # write_timeout is timeout for HTTP(S) write for addrs_in.
   write_timeout_ms: 100000
   # read_timeout is timeout for HTTP(S) read for addrs_in.

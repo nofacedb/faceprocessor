@@ -19,6 +19,7 @@ from aiohttp import web, ClientSession
 
 class HTTPServerCFG:
     def __init__(self, cfg: dict):
+        self.name = cfg['name']
         self.socket = cfg['socket']
         self.write_timeout_ms = cfg['write_timeout_ms']
         self.read_timeout_ms = cfg['read_timeout_ms']
@@ -54,13 +55,13 @@ class HTTPServer:
     def __init__(self, cfg: CFG):
         self.cfg = cfg
         app = web.Application(client_max_size=self.cfg.http_server_cfg.req_max_size)
-        app.add_routes([web.put(HTTPServer.API_V1_GET_FBS, self.api_get_fbs),
-                        web.put(HTTPServer.API_V1_GET_FFS, self.api_get_ffs),
-                        web.put(HTTPServer.API_V1_PROC_IMG, self.api_proc_img)])
+        app.add_routes([web.put(HTTPServer.API_V1_GET_FBS, self.get_fbs_handler),
+                        web.put(HTTPServer.API_V1_GET_FFS, self.get_ffs_handler),
+                        web.put(HTTPServer.API_V1_PROC_IMG, self.proc_img_handler)])
         if self.cfg.http_server_cfg.key_path != '' and self.cfg.http_server_cfg.crt_path != '':
-            self.src_addr = 'https://' + self.cfg.http_server_cfg.socket
+            self.src_addr = 'https://' + self.cfg.http_server_cfg.name
         else:
-            self.src_addr = 'http://' + self.cfg.http_server_cfg.socket
+            self.src_addr = 'http://' + self.cfg.http_server_cfg.name
         self.app = app
 
     def run(self):
@@ -89,7 +90,7 @@ class HTTPServer:
 
     RESP_API_V1_PUT_FBS = '/api/v1/put_fbs'
 
-    async def api_get_fbs(self, req: web.Request) -> web.Response:
+    async def get_fbs_handler(self, req: web.Request) -> web.Response:
         try:
             body = await req.json()
             headers = body['headers']
@@ -159,7 +160,7 @@ class HTTPServer:
 
     RESP_API_V1_PUT_FFS = '/api/v1/put_ffs'
 
-    async def api_get_ffs(self, req: web.Request) -> web.Response:
+    async def get_ffs_handler(self, req: web.Request) -> web.Response:
         try:
             body = await req.json()
             headers = body['headers']
@@ -228,7 +229,7 @@ class HTTPServer:
 
     RESP_API_V1_PROC_IMG = '/api/v1/proc_img'
 
-    async def api_proc_img(self, req: web.Request) -> web.Response:
+    async def proc_img_handler(self, req: web.Request) -> web.Response:
         try:
             body = await req.json()
             headers = body['headers']
