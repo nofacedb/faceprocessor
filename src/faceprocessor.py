@@ -57,6 +57,10 @@ class HTTPServer:
         app.add_routes([web.put(HTTPServer.API_V1_GET_FBS, self.api_get_fbs),
                         web.put(HTTPServer.API_V1_GET_FFS, self.api_get_ffs),
                         web.put(HTTPServer.API_V1_PROC_IMG, self.api_proc_img)])
+        if self.cfg.http_server_cfg.key_path != '' and self.cfg.http_server_cfg.crt_path != '':
+            self.src_addr = 'https://' + self.cfg.http_server_cfg.socket
+        else:
+            self.src_addr = 'http://' + self.cfg.http_server_cfg.socket
         self.app = app
 
     def run(self):
