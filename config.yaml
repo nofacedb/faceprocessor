@@ -1,0 +1,27 @@
+http_server:
+  # server_addr is IP:PORT or path to UNIX socket
+  # on which server will listen.
+  socket : "0.0.0.0:10000"
+  # write_timeout is timeout for HTTP(S) write for addrs_in.
+  write_timeout_ms: 100000
+  # read_timeout is timeout for HTTP(S) read for addrs_in.
+  read_timeout_ms: 100000
+  # immed_resp specifies, if server should return answer only
+  # after image processed (false) or immediately (true).
+  immed_resp: true
+  # key_path is path to TLS key (if empty, server will use HTTP).
+  key_path: ""
+  # crt_path is path to TLS cert (if empty, server will use HTTP).
+  crt_path: ""
+
+face_recognition:
+  # Size of facial features vector.
+  facial_features_size: 128
+  # use GPU for finding faces in image (gives better quality).
+  GPU: true
+  # number of upsamples (bigger ->
+  #smaller faces could be found).
+  upsamples: 1
+  # number of re-samples (bigger ->
+  # better quality of features vectors, but slower).
+  jitters: 1
