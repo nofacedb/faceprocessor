@@ -5,6 +5,7 @@
 import argparse
 import asyncio
 import json
+import ssl
 from base64 import b64decode
 from io import BytesIO
 from re import match
@@ -14,6 +15,30 @@ import numpy as np
 import yaml
 from PIL import Image
 from aiohttp import web, ClientSession
+
+
+class HTTPServerCFG:
+    def __init__(self, cfg: dict):
+        self.socket = cfg['socket']
+        self.write_timeout_ms = cfg['write_timeout_ms']
+        self.read_timeout_ms = cfg['read_timeout_ms']
+        self.immed_resp = cfg['immed_resp']
+        self.req_max_size = cfg['req_max_size']
+        self.key_path = cfg['key_path']
+        self.crt_path = cfg['crt_path']
+
+
+class FaceRecognitionCFG:
+    def __init__(self, cfg: dict):
+        self.gpu = cfg['gpu']
+        self.upsamples = cfg['upsamples']
+        self.jitters = cfg['jitters']
+
+
+class CFG:
+    def __init__(self, fcfg: dict):
+        self.http_server_cfg = HTTPServerCFG(fcfg['http_server'])
+        self.face_recognition_cfg = FaceRecognitionCFG(fcfg['face_recognition'])
 
 
 class HTTPServer:
@@ -26,25 +51,37 @@ class HTTPServer:
     API_V1_GET_FFS = '/api/v1/get_ffs'
     API_V1_PROC_IMG = '/api/v1/proc_img'
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: CFG):
         self.cfg = cfg
-        app = web.Application(client_max_size=self.cfg.reqmaxsize)
+        app = web.Application(client_max_size=self.cfg.http_server_cfg.req_max_size)
         app.add_routes([web.put(HTTPServer.API_V1_GET_FBS, self.api_get_fbs),
                         web.put(HTTPServer.API_V1_GET_FFS, self.api_get_ffs),
                         web.put(HTTPServer.API_V1_PROC_IMG, self.api_proc_img)])
         self.app = app
 
     def run(self):
-        conn_str = self.cfg.socket
+        conn_str = self.cfg.http_server_cfg.socket
         is_ip_port = match(r'(\d)+\.(\d)+\.(\d)+\.(\d)+:(\d)+', conn_str) is not None
+        if self.cfg.http_server_cfg.crt_path != '' and self.cfg.http_server_cfg.key_path != '':
+            ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_context.load_cert_chain(self.cfg.http_server_cfg.crt_path,
+                                        self.cfg.http_server_cfg.key_path)
+        else:
+            ssl_context = None
         if is_ip_port:
             conn_data = conn_str.split(':')
             host = conn_data[0]
             port = int(conn_data[1])
-            web.run_app(self.app, host=host, port=port)
+            if ssl_context is not None:
+                web.run_app(self.app, host=host, port=port, ssl_context=ssl_context)
+            else:
+                web.run_app(self.app, host=host, port=port)
         else:
             path = conn_str
-            web.run_app(self.app, path=path)
+            if ssl_context is not None:
+                web.run_app(self.app, path=path, ssl_context=ssl_context)
+            else:
+                web.run_app(self.app, path=path)
 
     RESP_API_V1_PUT_FBS = '/api/v1/put_fbs'
 
@@ -64,7 +101,7 @@ class HTTPServer:
                 'error_info': 'invalid request data'
             }, status=HTTPServer.STATUS_BAD_REQUEST)
 
-        if self.cfg.immed_resp:
+        if self.cfg.http_server_cfg.immed_resp:
             asyncio.ensure_future(self.api_get_fbs_create_resp(addr, req_id, img))
             return web.json_response({'headers': {'src_addr': self.src_addr, 'immed': True}})
 
@@ -116,7 +153,7 @@ class HTTPServer:
                 fbs = face_recognition.face_locations(img, self.upsamples, 'hog')
         return fbs
 
-    RESP_API_V1_PUT_FBS = '/api/v1/put_ffs'
+    RESP_API_V1_PUT_FFS = '/api/v1/put_ffs'
 
     async def api_get_ffs(self, req: web.Request) -> web.Response:
         try:
@@ -135,7 +172,7 @@ class HTTPServer:
                 'error_info': 'invalid request data'
             }, status=HTTPServer.STATUS_BAD_REQUEST)
 
-        if self.cfg.immed_resp:
+        if self.cfg.http_server_cfg.immed_resp:
             asyncio.ensure_future(self.api_get_ffs_create_resp(addr, req_id, img, fbs))
             return web.json_response({'headers': {'src_addr': self.src_addr, 'immed': True}})
 
@@ -162,7 +199,7 @@ class HTTPServer:
         except Exception:
             async with ClientSession(
                     json_serialize=json.dumps) as session:
-                await session.put(addr + HTTPServer.RESP_API_V1_PUT_FBS, json={
+                await session.put(addr + HTTPServer.RESP_API_V1_PUT_FFS, json={
                     'headers': {'src_addr': self.src_addr, 'immed': False},
                     'id': req_id,
                     'error': True,
@@ -172,7 +209,7 @@ class HTTPServer:
 
         async with ClientSession(
                 json_serialize=json.dumps) as session:
-            await session.put(addr + HTTPServer.RESP_API_V1_PUT_FBS, json={
+            await session.put(addr + HTTPServer.RESP_API_V1_PUT_FFS, json={
                 'headers': {'src_addr': self.src_addr, 'immed': False},
                 'id': req_id,
                 'error': False,
@@ -181,11 +218,11 @@ class HTTPServer:
 
     async def get_ffs_from_img(self, img: np.array, fbs) -> list:
         async with self.lock:
-            ffs = face_recognition.face_encodings(img, fbs, self.cfg.jitters)
+            ffs = face_recognition.face_encodings(img, fbs, self.cfg.face_recognition_cfg.jitters)
         return [{'box': fbs[i], 'features': ffs[i].tolist()} for i in
                 range(len(ffs))]
 
-    RESP_API_V1_PUT_FBS = '/api/v1/proc_img'
+    RESP_API_V1_PROC_IMG = '/api/v1/proc_img'
 
     async def api_proc_img(self, req: web.Request) -> web.Response:
         try:
@@ -203,7 +240,7 @@ class HTTPServer:
                 'error_info': 'invalid request data'
             }, status=HTTPServer.STATUS_BAD_REQUEST)
 
-        if self.cfg.immed_resp:
+        if self.cfg.http_server_cfg.immed_resp:
             asyncio.ensure_future(self.api_proc_img_create_resp(addr, req_id, img))
             return web.json_response({'headers': {'src_addr': self.src_addr, 'immed': True}})
 
@@ -230,7 +267,7 @@ class HTTPServer:
         except Exception:
             async with ClientSession(
                     json_serialize=json.dumps) as session:
-                await session.put(addr + HTTPServer.RESP_API_V1_PUT_FBS, json={
+                await session.put(addr + HTTPServer.RESP_API_V1_PROC_IMG, json={
                     'headers': {'src_addr': self.src_addr, 'immed': False},
                     'id': req_id,
                     'error': True,
@@ -240,7 +277,7 @@ class HTTPServer:
 
         async with ClientSession(
                 json_serialize=json.dumps) as session:
-            await session.put(addr + HTTPServer.RESP_API_V1_PUT_FBS, json={
+            await session.put(addr + HTTPServer.RESP_API_V1_PROC_IMG, json={
                 'headers': {'src_addr': self.src_addr, 'immed': False},
                 'id': req_id,
                 'error': False,
@@ -269,30 +306,6 @@ def parse_args():
     args = parser.parse_args()
 
     return args
-
-
-class HTTPServerCFG:
-    def __init__(self, cfg: dict):
-        self.socket = cfg['socket']
-        self.write_timeout_ms = cfg['write_timeout_ms']
-        self.read_timeout_ms = cfg['read_timeout_ms']
-        self.immed_resp = cfg['immed_resp']
-        self.req_max_size = cfg['req_max_size']
-        self.key_path = cfg['key_path']
-        self.crt_path = cfg['crt_path']
-
-
-class FaceRecognitionCFG:
-    def __init__(self, cfg: dict):
-        self.gpu = cfg['gpu']
-        self.upsamples = cfg['upsamples']
-        self.jitters = cfg['jitters']
-
-
-class CFG:
-    def __init__(self, fcfg: dict):
-        self.http_server_cfg = HTTPServerCFG(fcfg['http_server'])
-        self.face_recognition_cfg = FaceRecognitionCFG(fcfg['face_recognition'])
 
 
 def main():
