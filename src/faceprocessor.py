@@ -15,6 +15,7 @@ import numpy as np
 import yaml
 from PIL import Image
 from aiohttp import web, ClientSession
+from asyncio import Lock
 
 
 class HTTPServerCFG:
@@ -34,6 +35,7 @@ class FaceRecognitionCFG:
         self.gpu = cfg['gpu']
         self.upsamples = cfg['upsamples']
         self.jitters = cfg['jitters']
+        self.timeout_ms = cfg['timeout_ms']
 
 
 class CFG:
@@ -43,7 +45,7 @@ class CFG:
 
 
 class HTTPServer:
-    """HTTPServer class handles request for image processing: finding faces and getting facial features."""
+    """HTTPServer class handles requests for image processing: finding faces and getting facial features."""
 
     STATUS_BAD_REQUEST = 400
     STATUS_INTERNAL_SERVER_ERROR = 500
@@ -58,11 +60,12 @@ class HTTPServer:
         app.add_routes([web.put(HTTPServer.API_V1_GET_FBS, self.get_fbs_handler),
                         web.put(HTTPServer.API_V1_GET_FFS, self.get_ffs_handler),
                         web.put(HTTPServer.API_V1_PROC_IMG, self.proc_img_handler)])
+        self.app = app
         if self.cfg.http_server_cfg.key_path != '' and self.cfg.http_server_cfg.crt_path != '':
             self.src_addr = 'https://' + self.cfg.http_server_cfg.name
         else:
             self.src_addr = 'http://' + self.cfg.http_server_cfg.name
-        self.app = app
+        self.lock = Lock()
 
     def run(self):
         conn_str = self.cfg.http_server_cfg.socket
@@ -152,10 +155,10 @@ class HTTPServer:
 
     async def get_fbs_from_img(self, img: np.array) -> list:
         async with self.lock:
-            if self.gpu:
-                fbs = face_recognition.face_locations(img, self.upsamples, 'cnn')
+            if self.cfg.face_recognition_cfg.gpu:
+                fbs = face_recognition.face_locations(img, self.cfg.face_recognition_cfg.upsamples, 'cnn')
             else:
-                fbs = face_recognition.face_locations(img, self.upsamples, 'hog')
+                fbs = face_recognition.face_locations(img, self.cfg.face_recognition_cfg.upsamples, 'hog')
         return fbs
 
     RESP_API_V1_PUT_FFS = '/api/v1/put_ffs'
@@ -227,7 +230,7 @@ class HTTPServer:
         return [{'box': fbs[i], 'features': ffs[i].tolist()} for i in
                 range(len(ffs))]
 
-    RESP_API_V1_PROC_IMG = '/api/v1/proc_img'
+    RESP_API_V1_PROC_IMG = '/api/v1/put_ffs'
 
     async def proc_img_handler(self, req: web.Request) -> web.Response:
         try:
@@ -244,7 +247,6 @@ class HTTPServer:
                 'error': True,
                 'error_info': 'invalid request data'
             }, status=HTTPServer.STATUS_BAD_REQUEST)
-
         if self.cfg.http_server_cfg.immed_resp:
             asyncio.ensure_future(self.api_proc_img_create_resp(addr, req_id, img))
             return web.json_response({'headers': {'src_addr': self.src_addr, 'immed': True}})
@@ -266,7 +268,8 @@ class HTTPServer:
             'faces': ffs
         })
 
-    async def api_proc_img_create_resp(self, addr, req_id, img, fbs):
+    async def api_proc_img_create_resp(self, addr, req_id, img):
+        ffs = await self.proc_img(img)
         try:
             ffs = await self.proc_img(img)
         except Exception:
@@ -280,6 +283,7 @@ class HTTPServer:
                 })
             return
 
+        print(addr + HTTPServer.RESP_API_V1_PROC_IMG)
         async with ClientSession(
                 json_serialize=json.dumps) as session:
             await session.put(addr + HTTPServer.RESP_API_V1_PROC_IMG, json={
@@ -291,7 +295,7 @@ class HTTPServer:
 
     async def proc_img(self, img: np.array) -> list:
         fbs = await self.get_fbs_from_img(img)
-        ffs = await self.get_ffs_from_img(self, img, fbs)
+        ffs = await self.get_ffs_from_img(img, fbs)
         return ffs
 
 
@@ -314,7 +318,6 @@ def parse_args():
 
 
 def main():
-    """main processes cargs and processes input image or runs face recognition server"""
     args = parse_args()
     with open(args.config, 'r') as stream:
         fcfg = yaml.safe_load(stream)
