@@ -1,21 +1,11 @@
 http_server:
-  # name is a name, which will be sent as server name to other microservices.
-  name: "127.0.0.1:8000"
-  # server_addr is IP:PORT or path to UNIX socket
-  # on which server will listen.
-  socket: "0.0.0.0:8000"
-  # write_timeout is timeout for HTTP(S) write for addrs_in.
+  addr: "127.0.0.1"
+  port: 8081
   write_timeout_ms: 100000
-  # read_timeout is timeout for HTTP(S) read for addrs_in.
   read_timeout_ms: 100000
-  # immed_resp specifies, if server should return answer only
-  # after image processed (false) or immediately (true).
-  immed_resp: true
   # req_max_size is maximal size of request in bytes
   req_max_size: 16777216
-  # key_path is path to TLS key (if empty, server will use HTTP).
   key_path: ""
-  # crt_path is path to TLS cert (if empty, server will use HTTP).
   crt_path: ""
 
 face_recognition:
@@ -29,5 +19,7 @@ face_recognition:
   # number of re-samples (bigger ->
   # better quality of features vectors, but slower).
   jitters: 1
-  # ...
   timeout_ms: 10000
+
+logger:
+  output: "stdout"
