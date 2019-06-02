@@ -139,6 +139,7 @@ class HTTPServer:
                         'error_text': 'unable to get faceboxes'
                     }
                 })
+            exit(1)
             return
 
         async with ClientSession(
@@ -202,6 +203,7 @@ class HTTPServer:
                         'error_text': 'unable to get facial features vectors'
                     }
                 })
+            exit(1)
             return
 
         async with ClientSession(
@@ -260,6 +262,7 @@ class HTTPServer:
                         'error_text': 'unable to process image'
                     }
                 })
+            exit(1)
             return
 
         async with ClientSession(
