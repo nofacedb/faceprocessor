@@ -35,6 +35,8 @@ class FaceRecognitionCFG:
         self.gpu = cfg['gpu']
         self.upsamples = cfg['upsamples']
         self.jitters = cfg['jitters']
+        self.max_width = cfg['max_width']
+        self.max_height = cfg['max_height']
         self.timeout_ms = cfg['timeout_ms']
 
 
@@ -106,7 +108,8 @@ class HTTPServer:
             addr = header['src_addr']
             req_uuid = header['uuid']
             img_buff = body['img_buff']
-            img = np.array(Image.open(BytesIO(b64decode(img_buff))))
+            img, coef = self.scale_image(Image.open(BytesIO(b64decode(img_buff))))
+            img = np.array(img)
         except Exception:
             self.logger.exception('unable to process request')
             return web.json_response({
@@ -119,13 +122,20 @@ class HTTPServer:
             }, status=HTTPServer.STATUS_BAD_REQUEST)
         self.logger.debug('SrcAddr: "%s", UUID: "%s"', addr, req_uuid)
 
-        asyncio.ensure_future(self.get_faceboxes_create_resp(addr, req_uuid, img))
+        asyncio.ensure_future(self.get_faceboxes_create_resp(addr, req_uuid, img, coef))
         return web.json_response({'header': {'src_addr': self.src_addr, 'uuid': req_uuid}})
 
-    async def get_faceboxes_create_resp(self, addr, req_uuid, img):
+    async def get_faceboxes_create_resp(self, addr, req_uuid, img, coef):
         try:
             self.logger.debug('getting faceboxes for image "%s"' % req_uuid)
             faceboxes = await self.get_faceboxes_from_image(img)
+            for i in range(len(faceboxes)):
+                facebox = faceboxes[i]
+                facebox = (int(facebox[0] * coef),
+                           int(facebox[1] * coef),
+                           int(facebox[2] * coef),
+                           int(facebox[3] * coef))
+                faceboxes[i] = facebox
             self.logger.debug('successfully processed image "%s"' % req_uuid)
         except Exception:
             self.logger.exception('unable to process image "%s"' % req_uuid)
@@ -151,11 +161,10 @@ class HTTPServer:
         self.logger.debug('successfully sent faceboxes data for image "%s" to "%s"' % (req_uuid, addr))
 
     async def get_faceboxes_from_image(self, img: np.array) -> list:
-        async with self.lock:
-            if self.cfg.face_recognition_cfg.gpu:
-                faceboxes = face_recognition.face_locations(img, self.cfg.face_recognition_cfg.upsamples, 'cnn')
-            else:
-                faceboxes = face_recognition.face_locations(img, self.cfg.face_recognition_cfg.upsamples, 'hog')
+        if self.cfg.face_recognition_cfg.gpu:
+            faceboxes = face_recognition.face_locations(img, self.cfg.face_recognition_cfg.upsamples, 'cnn')
+        else:
+            faceboxes = face_recognition.face_locations(img, self.cfg.face_recognition_cfg.upsamples, 'hog')
         return faceboxes
 
     RESP_API_V1_PUT_FACES_DATA = '/api/v1/put_faces_data'
@@ -169,7 +178,8 @@ class HTTPServer:
             addr = header['src_addr']
             req_uuid = header['uuid']
             img_buff = body['img_buff']
-            img = np.array(Image.open(BytesIO(b64decode(img_buff))))
+            img, coef = self.scale_image(Image.open(BytesIO(b64decode(img_buff))))
+            img = np.array(img)
             faceboxes = body['faceboxes']
         except Exception:
             self.logger.exception("unable to process request")
@@ -183,13 +193,27 @@ class HTTPServer:
             }, status=HTTPServer.STATUS_BAD_REQUEST)
         self.logger.debug('SrcAddr: "%s", UUID: "%s"', addr, req_uuid)
 
-        asyncio.ensure_future(self.api_get_facial_features_vectors_create_resp(addr, req_uuid, img, faceboxes))
+        asyncio.ensure_future(self.api_get_facial_features_vectors_create_resp(addr, req_uuid, img, coef, faceboxes))
         return web.json_response({'header': {'src_addr': self.src_addr, 'immed': True}})
 
-    async def api_get_facial_features_vectors_create_resp(self, addr, req_uuid, img, fbs):
+    async def api_get_facial_features_vectors_create_resp(self, addr, req_uuid, img, coef, faceboxes):
         try:
             self.logger.debug('getting facial features vectors for image "%s"' % req_uuid)
-            ffs = await self.get_facial_features_vectors_from_image(img, fbs)
+            for i in range(len(faceboxes)):
+                facebox = faceboxes[i]
+                facebox = (int(facebox[0] / coef),
+                           int(facebox[1] / coef),
+                           int(facebox[2] / coef),
+                           int(facebox[3] / coef))
+                faceboxes[i] = facebox
+            ffs = await self.get_facial_features_vectors_from_image(img, faceboxes)
+            for ff in ffs:
+                facebox = ff['facebox']
+                facebox = (int(facebox[0] * coef),
+                           int(facebox[1] * coef),
+                           int(facebox[2] * coef),
+                           int(facebox[3] * coef))
+                ff['facebox'] = facebox
             self.logger.debug('successfully processed image "%s"' % req_uuid)
         except Exception:
             self.logger.exception('unable to process image "%s"' % req_uuid)
@@ -215,8 +239,7 @@ class HTTPServer:
         self.logger.debug('successfully sent faces data for image "%s" to "%s"' % (req_uuid, addr))
 
     async def get_facial_features_vectors_from_image(self, img: np.array, fbs) -> list:
-        async with self.lock:
-            ffs = face_recognition.face_encodings(img, fbs, self.cfg.face_recognition_cfg.jitters)
+        ffs = face_recognition.face_encodings(img, fbs, self.cfg.face_recognition_cfg.jitters)
         return [{'facebox': fbs[i], 'facial_features_vector': ffs[i].tolist()} for i in
                 range(len(ffs))]
 
@@ -229,7 +252,8 @@ class HTTPServer:
             addr = header['src_addr']
             req_uuid = header['uuid']
             img_buff = body['img_buff']
-            img = np.array(Image.open(BytesIO(b64decode(img_buff))))
+            img, coef = self.scale_image(Image.open(BytesIO(b64decode(img_buff))))
+            img = np.array(img)
         except Exception:
             self.logger.exception("unable to process request")
             return web.json_response({
@@ -242,13 +266,20 @@ class HTTPServer:
             }, status=HTTPServer.STATUS_BAD_REQUEST)
         self.logger.debug('SrcAddr: "%s", UUID: "%s"', addr, req_uuid)
 
-        asyncio.ensure_future(self.api_process_image_create_resp(addr, req_uuid, img))
+        asyncio.ensure_future(self.api_process_image_create_resp(addr, req_uuid, img, coef))
         return web.json_response({'header': {'src_addr': self.src_addr, 'uuid': req_uuid}})
 
-    async def api_process_image_create_resp(self, addr, req_uuid, img):
+    async def api_process_image_create_resp(self, addr, req_uuid, img, coef):
         try:
             self.logger.debug('processing image "%s"' % req_uuid)
             ffs = await self.process_image(img)
+            for ff in ffs:
+                facebox = ff['facebox']
+                facebox = (int(facebox[0] * coef),
+                           int(facebox[1] * coef),
+                           int(facebox[2] * coef),
+                           int(facebox[3] * coef))
+                ff['facebox'] = facebox
             self.logger.debug('successfully processed image "%s"' % req_uuid)
         except Exception:
             self.logger.exception('unable to process image "%s"' % req_uuid)
@@ -277,6 +308,20 @@ class HTTPServer:
         fbs = await self.get_faceboxes_from_image(img)
         ffs = await self.get_facial_features_vectors_from_image(img, fbs)
         return ffs
+
+    def scale_image(self, img: Image.Image) -> (Image.Image, float):
+        scale_coef_width = img.width / self.cfg.face_recognition_cfg.max_width
+        scale_coef_height = img.height / self.cfg.face_recognition_cfg.max_height
+        if (scale_coef_width >= 1.0) or (scale_coef_height >= 1.0):
+            if scale_coef_width > scale_coef_height:
+                coef = scale_coef_width
+            else:
+                coef = scale_coef_height
+        else:
+            coef = 1.0
+        size = (int(img.width / coef), int(img.height / coef))
+        img = img.resize(size)
+        return img, coef
 
 
 DESC_STR = r"""FaceRecognition is a simple script, that finds all faces in image

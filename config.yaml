@@ -19,6 +19,8 @@ face_recognition:
   # number of re-samples (bigger ->
   # better quality of features vectors, but slower).
   jitters: 1
+  max_width: 768
+  max_height: 512
   timeout_ms: 10000
 
 logger:
