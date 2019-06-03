@@ -3,6 +3,7 @@
 """facerecognition.py is a simple FACEDB face recognition engine"""
 
 import argparse
+import threading
 import asyncio
 import json
 import logging

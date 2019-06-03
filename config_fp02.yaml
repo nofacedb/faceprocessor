@@ -1,0 +1,27 @@
+http_server:
+  addr: "127.0.0.1"
+  port: 8082
+  write_timeout_ms: 100000
+  read_timeout_ms: 100000
+  # req_max_size is maximal size of request in bytes
+  req_max_size: 16777216
+  key_path: ""
+  crt_path: ""
+
+face_recognition:
+  # Size of facial features vector.
+  facial_features_size: 128
+  # use GPU for finding faces in image (gives better quality).
+  gpu: true
+  # number of upsamples (bigger ->
+  #smaller faces could be found).
+  upsamples: 1
+  # number of re-samples (bigger ->
+  # better quality of features vectors, but slower).
+  jitters: 1
+  max_width: 768
+  max_height: 512
+  timeout_ms: 10000
+
+logger:
+  output: "stdout"
