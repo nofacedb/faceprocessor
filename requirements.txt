@@ -1,5 +1,5 @@
 numpy==1.16.3
 face_recognition==1.2.3
 aiohttp==3.5.4
-Pillow==6.2.0
+Pillow>=7.1.0
 PyYAML==5.1
